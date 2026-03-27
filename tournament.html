@@ -319,8 +319,9 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
 
 <!-- STANDINGS TAB -->
 <div id="pg-standings" class="pg">
+  <div id="standings-tc-banner" style="display:none;background:linear-gradient(135deg,rgba(201,168,76,0.12),rgba(201,168,76,0.06));border:1px solid var(--ac);border-radius:12px;padding:14px 16px;margin-bottom:14px;text-align:center"><div style="font-size:28px">&#127942;</div><div style="font-family:&quot;Playfair Display&quot;,serif;font-size:20px;color:var(--ac);margin-top:4px">Tournament Complete</div><div style="font-size:11px;color:var(--fd);margin-top:4px">Final standings &#8212; scores locked</div></div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <div style="font-size:11px;color:var(--fd)">Live standings</div>
+    <div class="standings-live-lbl" style="font-size:11px;color:var(--fd)">Live standings</div>
     <button class="bico" onclick="renderStandings()">&#8635;</button>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
@@ -614,8 +615,8 @@ function pickTheme(t){
   if(saved&&saved.id){
     T={id:saved.id,code:saved.code};
     isDir=saved.dir||false;
-    dbGet('tournaments','id=eq.'+T.id+'&status=eq.active').then(function(rows){
-      if(rows&&rows.length){T=rows[0];enterTournament();}else{showLanding();}
+    dbGet('tournaments','id=eq.'+T.id+'&status=in.(active,ended)').then(function(rows){
+      if(rows&&rows.length){T=rows[0];isDir=isDir&&T.status!=='ended';enterTournament();}else{showLanding();}
     }).catch(function(){showLanding();});
   } else {
     showLanding();
@@ -710,9 +711,9 @@ function joinTournament(){
   if(raw.length===7&&raw.endsWith('D')){dirMode=true;code=raw.slice(0,6);}
   if(code.length!==6){toast('Enter a 6-character code');return;}
   toast('Joining...');
-  dbGet('tournaments','code=eq.'+code+'&status=eq.active').then(function(rows){
-    if(!rows||!rows.length){toast('Tournament not found or ended');return;}
-    T=rows[0];isDir=dirMode;saveSess();enterTournament();
+  dbGet('tournaments','code=eq.'+code+'&status=in.(active,ended)').then(function(rows){
+    if(!rows||!rows.length){toast('Tournament not found');return;}
+    T=rows[0];isDir=dirMode&&T.status!=='ended';saveSess();enterTournament();
   }).catch(function(e){toast('Error: '+e.message);});
 }
 
@@ -852,7 +853,8 @@ function openScoring(assign,round){
 function loadHandsFromDB(aid){
   dbGet('hands','assignment_id=eq.'+aid+'&order=hand_number').then(function(hh){
     if(!hh||!hh.length)return;
-    HS.hands=hh.map(function(h){return{handNum:h.hand_number,bid:h.bid,bidder:h.bidder_team,bidPid:h.bidder_player_id,suit:h.trump,m1:h.meld1,m2:h.meld2,tr1:h.tricks1,tr2:h.tricks2,sc1:h.score1,sc2:h.score2,bust:h.bust,moon:h.moon,moonResult:h.moon_result};});
+    var _pm={};if(HS.p1)_pm[HS.p1.id]=HS.p1.name;if(HS.p2)_pm[HS.p2.id]=HS.p2.name;if(HS.p3)_pm[HS.p3.id]=HS.p3.name;if(HS.p4)_pm[HS.p4.id]=HS.p4.name;
+    HS.hands=hh.map(function(h){return{handNum:h.hand_number,bid:h.bid,bidder:h.bidder_team,bidPid:h.bidder_player_id,bidPname:h.bidder_player_id?(_pm[h.bidder_player_id]||null):null,suit:h.trump,m1:h.meld1,m2:h.meld2,tr1:h.tricks1,tr2:h.tricks2,sc1:h.score1,sc2:h.score2,bust:h.bust,moon:h.moon,moonResult:h.moon_result};});
     HS.scores=[0,0];
     HS.hands.forEach(function(h){HS.scores[0]+=h.sc1;HS.scores[1]+=h.sc2;});
     var played=HS.hands.map(function(h){return h.handNum;});
@@ -1124,6 +1126,11 @@ function renderStandings(){
   if(!T)return;
   var funnyLast=['\uD83E\uDD92 Last place','\uD83D\uDC80 RIP','\uD83E\uDD23 Yikes','\uD83D\uDE35 Send help'];
   var funny=funnyLast[Math.floor(Math.random()*funnyLast.length)];
+  // Tournament Complete banner & label
+  var _tcBanner=document.getElementById('standings-tc-banner');
+  if(_tcBanner){_tcBanner.style.display=T&&T.status==='ended'?'block':'none';}
+  var _slbl=document.querySelector('.standings-live-lbl');
+  if(_slbl)_slbl.textContent=T&&T.status==='ended'?'\u2714 Final scores':'Live standings';
   dbGet('players','tournament_id=eq.'+T.id+'&order=total_score.desc').then(function(ps){
     if(!ps||!ps.length){se.innerHTML='<div class="empty" style="padding:20px 10px">No scores yet</div>';oe.innerHTML='';return;}
     return dbGet('rounds','tournament_id=eq.'+T.id+'&order=round_number.desc&limit=20').then(function(rounds){
@@ -1137,7 +1144,7 @@ function renderStandings(){
       var sIds=sessRounds.map(function(r){return r.id;}).join(',');
       return dbGet('table_assignments','round_id=in.('+sIds+')').then(function(assigns){
         (assigns||[]).forEach(function(a){
-          if(!a.submitted)return;
+          // Include all tables (submitted + in-progress) for live standings
           if(a.player1_id)sScores[a.player1_id]=(sScores[a.player1_id]||0)+a.team1_score;
           if(a.player3_id)sScores[a.player3_id]=(sScores[a.player3_id]||0)+a.team1_score;
           if(a.player2_id)sScores[a.player2_id]=(sScores[a.player2_id]||0)+a.team2_score;
@@ -1304,10 +1311,10 @@ function buildStats(el,hands,rounds,assigns,ps){
     +'<div class="scard full" style="background:rgba(201,168,76,0.04);border-color:rgba(201,168,76,0.2)">'
     +'<div class="slbl" style="color:var(--ac)">&#127919; Bidding Overview</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-top:8px">'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Bid</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">'+avgBid+'</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">High Bid</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">'+maxBid+'</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Meld</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">'+avgMeld+'</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bust Rate</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:'+(bustPct>30?'var(--ng)':bustPct>20?'var(--ac)':'#22cc66')+'">'+bustPct+'%</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Bid</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">'+avgBid+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">High Bid</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">'+maxBid+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Meld</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">'+avgMeld+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bust Rate</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:'+(bustPct>30?'var(--ng)':bustPct>20?'var(--ac)':'#22cc66')+'">'+bustPct+'%</div></div>'
     +'</div></div>'
 
     // Group advanced stats
@@ -1315,26 +1322,26 @@ function buildStats(el,hands,rounds,assigns,ps){
     +'<div class="slbl" style="color:#c090ff">&#128101; Group Intelligence</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
     +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Group Bidding Style</div><div style="font-size:14px;font-weight:600;color:'+aggColor+'">'+aggLabel+'</div><div style="font-size:10px;color:var(--fd);margin-top:1px">avg +'+avgOver+' over meld</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Trick Capture</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:#c090ff">'+avgTR+'%</div><div style="font-size:10px;color:var(--fd);margin-top:1px">of 250 pts when winning</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Comeback Rate</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:#c090ff">'+comebackRate+'%</div><div style="font-size:10px;color:var(--fd);margin-top:1px">win after losing at half</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Trick Capture</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:#c090ff">'+avgTR+'%</div><div style="font-size:10px;color:var(--fd);margin-top:1px">of 250 pts when winning</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Comeback Rate</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:#c090ff">'+comebackRate+'%</div><div style="font-size:10px;color:var(--fd);margin-top:1px">win after losing at half</div></div>'
     +'</div></div>'
 
     // Successful hands
     +'<div class="scard full" style="background:rgba(34,204,102,0.04);border-color:rgba(34,204,102,0.18)">'
     +'<div class="slbl" style="color:#22cc66">&#10003; Successful Hands ('+succ.length+')</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Meld</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:#22cc66">'+succMeld+'</div><div style="font-size:9px;color:var(--fd)">bidder declared</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bidder Tricks</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:#22cc66">'+succTr+'</div><div style="font-size:9px;color:var(--fd)">avg pts won</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Opponent Tricks</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--fd)">'+succOppTr+'</div><div style="font-size:9px;color:var(--fd)">avg pts won</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Meld</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:#22cc66">'+succMeld+'</div><div style="font-size:9px;color:var(--fd)">bidder declared</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bidder Tricks</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:#22cc66">'+succTr+'</div><div style="font-size:9px;color:var(--fd)">avg pts won</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Opponent Tricks</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--fd)">'+succOppTr+'</div><div style="font-size:9px;color:var(--fd)">avg pts won</div></div>'
     +'</div></div>'
 
     // Bust hands
     +'<div class="scard full" style="background:rgba(230,57,70,0.04);border-color:rgba(230,57,70,0.18)">'
     +'<div class="slbl" style="color:var(--ng)">&#10005; Bust Hands ('+busts.length+')</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bidder Meld Had</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ng)">'+bustMeld+'</div><div style="font-size:9px;color:var(--fd)">couldn't convert</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Tricks Won</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ng)">'+bustTr+'</div><div style="font-size:9px;color:var(--fd)">not enough</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Shortfall</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ng)">'+bustShort+'</div><div style="font-size:9px;color:var(--fd)">pts short of bid</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bidder Meld Had</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ng)">'+bustMeld+'</div><div style="font-size:9px;color:var(--fd)">couldn&#39;t convert</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Tricks Won</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ng)">'+bustTr+'</div><div style="font-size:9px;color:var(--fd)">not enough</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Shortfall</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ng)">'+bustShort+'</div><div style="font-size:9px;color:var(--fd)">pts short of bid</div></div>'
     +'</div></div>'
 
     // Scoring momentum
@@ -1345,8 +1352,35 @@ function buildStats(el,hands,rounds,assigns,ps){
     +'<div class="scard full"><div class="slbl">Trump Analytics</div><div style="font-size:10px;color:var(--fd);margin-bottom:8px">Frequency &amp; bust % — lower bust is better</div>'+suitRows+'</div>'
 
     // Scoring spread
-    +(stdDev>0?'<div class="scard full"><div class="slbl">Scoring Spread</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Table Score</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">'+Math.round(avgT)+'</div></div><div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Std Deviation</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">&plusmn;'+stdDev+'</div><div style="font-size:9px;color:var(--fd)">score variability</div></div></div></div>':'')
+    +(stdDev>0?'<div class="scard full"><div class="slbl">Scoring Spread</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Avg Table Score</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">'+Math.round(avgT)+'</div></div><div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Std Deviation</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">&plusmn;'+stdDev+'</div><div style="font-size:9px;color:var(--fd)">score variability</div></div></div></div>':'')
 
+    // Top Bidders leaderboard
+    +(function(){
+      var _bpMap={};(ps||[]).forEach(function(p){_bpMap[p.id]=p.name;});
+      var _bMap={};
+      hands.forEach(function(h){
+        if(!h.bidder_player_id)return;
+        if(!_bMap[h.bidder_player_id])_bMap[h.bidder_player_id]={n:_bpMap[h.bidder_player_id]||'Unknown',t:0,w:0};
+        _bMap[h.bidder_player_id].t++;
+        if(!h.bust&&h.moon_result!=='no')_bMap[h.bidder_player_id].w++;
+      });
+      var _bArr=Object.keys(_bMap).map(function(k){return _bMap[k];}).sort(function(a,b){return b.t-a.t;}).slice(0,5);
+      if(!_bArr.length)return '';
+      var _rows=_bArr.map(function(b,i){
+        var pct=b.t?Math.round((b.w/b.t)*100):0;
+        var col=pct>=70?'#22cc66':pct>=50?'var(--ac)':'var(--ng)';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bc);border:1px solid var(--br);border-radius:8px;margin-bottom:5px">'
+          +'<div style="font-size:12px;color:var(--ad);width:16px;text-align:center;flex-shrink:0">'+(i+1)+'</div>'
+          +'<div style="flex:1;font-size:12px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(b.n)+'</div>'
+          +'<div style="font-size:11px;color:var(--fd);flex-shrink:0;margin-right:4px">'+b.t+' bids</div>'
+          +'<div style="font-size:12px;font-weight:700;color:'+col+';flex-shrink:0;min-width:34px;text-align:right">'+pct+'%</div>'
+          +'</div>';
+      }).join('');
+      return '<div class="scard full"><div class="slbl">&#127358; Top Bidders</div>'
+        +'<div style="font-size:10px;color:var(--fd);margin-bottom:8px">Ranked by bids taken &amp; win rate</div>'
+        +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--ad);text-transform:uppercase;letter-spacing:.5px;padding:2px 10px 6px;border-bottom:1px solid var(--br);margin-bottom:6px"><span>Player</span><span>Bids &nbsp;&nbsp; Win%</span></div>'
+        +_rows+'</div>';
+    })()
     +'</div>';
 }
 
@@ -1491,7 +1525,7 @@ function buildPlayerStats(el,player,pid,pname,allHands,myTables,assigns,allPs,ro
   var succBids=bidWins.map(function(h){return h.bid;}).filter(Boolean);
   var maxMade=succBids.length?Math.max.apply(null,succBids):null;
 
-  el.innerHTML='<div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac);margin-bottom:12px">'+esc(pname)+'</div>'
+  el.innerHTML='<div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac);margin-bottom:12px">'+esc(pname)+'</div>'
     +'<div class="sgrid">'
 
     // Core stats
@@ -1514,8 +1548,8 @@ function buildPlayerStats(el,player,pid,pname,allHands,myTables,assigns,allPs,ro
     +'<div class="slbl" style="color:var(--ac)">&#127919; Bidding Intelligence</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">'
     +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Bidding Aggression</div><div style="font-size:14px;font-weight:600;color:'+aggColor+'">'+aggLabel+'</div><div style="font-size:10px;color:var(--fd);margin-top:1px">'+aggDesc+'</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Highest Bid Made</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--ac)">'+(maxMade||'—')+'</div><div style="font-size:10px;color:var(--fd)">Range: '+minBid+'–'+maxBid+'</div></div>'
-    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Trick Capture Rate</div><div style="font-family:'Playfair Display',serif;font-size:20px;color:'+trColor+'">'+(avgTR!==null?avgTR+'%':'—')+'</div><div style="font-size:10px;color:var(--fd);margin-top:1px">% of 250 pts won when bidding</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Highest Bid Made</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:var(--ac)">'+(maxMade||'—')+'</div><div style="font-size:10px;color:var(--fd)">Range: '+minBid+'–'+maxBid+'</div></div>'
+    +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Trick Capture Rate</div><div style="font-family:"Playfair Display",serif;font-size:20px;color:'+trColor+'">'+(avgTR!==null?avgTR+'%':'—')+'</div><div style="font-size:10px;color:var(--fd);margin-top:1px">% of 250 pts won when bidding</div></div>'
     +'<div><div style="font-size:10px;color:var(--fd);margin-bottom:2px">Consistency Score</div><div style="font-size:14px;font-weight:600;color:'+consColor+'">'+consLabel+'</div><div style="font-size:10px;color:var(--fd);margin-top:1px">'+(stdDev!==null?'±'+stdDev+' pts std dev':'need 2+ rounds')+'</div></div>'
     +'</div></div>'
 
@@ -1535,7 +1569,7 @@ function buildPlayerStats(el,player,pid,pname,allHands,myTables,assigns,allPs,ro
     +(timingBars?'<div class="scard full"><div class="slbl">&#8987; Bid Timing &amp; Bust Rate by Hand</div><div style="font-size:10px;color:var(--fd);margin-bottom:8px">Do you bust more on certain hands?'+(worstHand>0?' Watch out for Hand '+worstHand+'.':'')+'</div><div style="margin-top:4px">'+timingBars+'</div></div>':'')
 
     // Moon shots
-    +((myMoons||myMoonFails)?'<div class="scard full"><div class="slbl">&#127769; Shoot the Moon</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div style="background:rgba(34,204,102,0.1);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:#22cc66;margin-bottom:4px">&#127765; Made it</div><div style="font-family:'Playfair Display',serif;font-size:26px;color:#22cc66">'+myMoons+'</div></div><div style="background:rgba(230,57,70,0.1);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--ng);margin-bottom:4px">&#128168; Missed</div><div style="font-family:'Playfair Display',serif;font-size:26px;color:var(--ng)">'+myMoonFails+'</div></div></div></div>':'')
+    +((myMoons||myMoonFails)?'<div class="scard full"><div class="slbl">&#127769; Shoot the Moon</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div style="background:rgba(34,204,102,0.1);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:#22cc66;margin-bottom:4px">&#127765; Made it</div><div style="font-family:"Playfair Display",serif;font-size:26px;color:#22cc66">'+myMoons+'</div></div><div style="background:rgba(230,57,70,0.1);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--ng);margin-bottom:4px">&#128168; Missed</div><div style="font-family:"Playfair Display",serif;font-size:26px;color:var(--ng)">'+myMoonFails+'</div></div></div></div>':'')
 
     +'</div>';
 }
